@@ -1,0 +1,148 @@
+---
+title: "Machine Learning Assignment"
+author: "Shahbaz Masood"
+date: "April 17, 2016"
+output: html_document
+---
+#Training the Weight Lifting Excercise Dataset for Predictions#
+
+##Initializing Libraries##
+
+```{r message=FALSE,warning=FALSE}
+
+require(caret)
+require(randomForest)
+set.seed(232)
+
+```
+
+##Loading the data##
+
+```{r cache=TRUE}
+training <- read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"))
+testing <- read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"))
+```
+
+##Initial screening for the data##
+
+```{r}
+head(training[,1:7])
+```
+
+It can be observed by inspecting visually that the first 7 columns of the dataset would have not have an influence in the predictions since they contain the metadata for the reading taken. The first 7 colums will be removed in both the sets i.e training and testing.
+
+```{r}
+training.rmFirstCols <- training[,-(1:7)]
+testing.rmFirstCols <- testing[,-(1:7)]
+```
+
+##Removing Zero Variance Features##
+
+To detect the features which have zero variance we can use the function nearZeroVar() and remove those colums from the data sets.
+
+```{r cache=TRUE}
+nZeroIndex <- nearZeroVar(training.rmFirstCols)
+
+training.rmFirstCols.rmZeroVar <- training.rmFirstCols[,-nZeroIndex]
+testing.rmFirstCols.rmZeroVar <- testing.rmFirstCols[,-nZeroIndex]
+
+```
+
+##Removing majority NA features##
+
+Now we remove the columns that have atleast NAs in 95% of the total entries.
+
+```{r}
+inNa <- as.vector(which(colSums(is.na(training.rmFirstCols.rmZeroVar))>nrow(training.rmFirstCols.rmZeroVar)*0.95))
+
+training.rmFirstCols.rmZeroVar.rmNa <- training.rmFirstCols.rmZeroVar[,-inNa]
+testing.rmFirstCols.rmZeroVar.rmNa <- testing.rmFirstCols.rmZeroVar[,-inNa]
+```
+
+##Removing correlated features##
+
+Now to remove the features that are correlated we set the threshold to 0.9 i.e the features that have a correlation of more than 0.9 will be removed. It is coincidental that the dataset now has all numeric columns except the outcome column i.e. classe. To find the correlation matrix, the classe column will be removed since it is a factor feature.
+
+```{r}
+
+M <- cor(training.rmFirstCols.rmZeroVar.rmNa[,-which(names(training.rmFirstCols.rmZeroVar.rmNa)=="classe")])
+inCor <- findCorrelation(M,cutoff = 0.9)
+
+training.rmFirstCols.rmZeroVar.rmNa.rmCor <- training.rmFirstCols.rmZeroVar.rmNa[,-inCor]
+testing.rmFirstCols.rmZeroVar.rmNa.rmCor <- testing.rmFirstCols.rmZeroVar.rmNa[,-inCor]
+```
+
+The number of columns of the resulting data set is `r ncol(training.rmFirstCols.rmZeroVar.rmNa.rmCor <- training.rmFirstCols.rmZeroVar.rmNa[,-inCor])`. This is a drastic change from the initial data set which had 160 features. For simplicity, we will change the name of the resulted training data set to "training" and "testing" since this is the dataset that will be use for training and testing the model.
+
+```{r}
+
+training <- training.rmFirstCols.rmZeroVar.rmNa.rmCor
+testing <- testing.rmFirstCols.rmZeroVar.rmNa.rmCor
+dim(training)
+dim(testing)
+```
+
+
+
+## Splitting the data into training and cross-validation sets##
+
+```{r}
+
+inTrain <- createDataPartition(training$classe,p=0.7,list=F)
+
+trData <- training[inTrain,]
+cvData <- training[-inTrain,]
+```
+
+##Training with Classification Tree##
+
+Since this is a classification problem, we will start by training a classification tree using our training data using caret package's train function with method = "rpart" 
+
+```{r}
+
+mod.rpart <- train(classe~.,method="rpart",data = trData)
+pred.train.rpart <- predict(mod.rpart$finalModel,type = "class")
+
+cm <- confusionMatrix(pred.train.rpart,trData$classe)
+
+cm
+```
+
+As can be seen from the results, the accuracy is `r as.numeric(round(cm$overall["Accuracy"]*100,2))` percent.
+
+##Training with Random Forest##
+
+
+To improve the accuracy we will use random forest to train a model using 50 trees. This time I chose to use the randomForest package instead of caret because caret is very very slow in training because of resampling and bootstrapping methods.
+
+
+```{r}
+
+mod.rf <- randomForest(classe~.,data = trData,ntree=50)
+mod.rf
+
+```
+
+It can be observed that the out of bag error is low. We will now test the accuracy of the model using the trainingData and the cross Validation data to find the out of sample error.
+
+
+```{r}
+## Accuracy for Training Data
+
+pred.train.rf <- predict(mod.rf)
+confusionMatrix(pred.train.rf,trData$classe)
+
+## Accuracy for Cross Validation Data
+
+pred.cv.rf <- predict(mod.rf,newdata = cvData)
+cm <- confusionMatrix(pred.cv.rf,cvData$classe)
+cm
+```
+
+The cross validation dataset resulted with an impressive accuracy of `r as.numeric(round(cm$overall["Accuracy"]*100,2))` percent.
+
+##Predicting the sample of 20 observations##
+The preprocessed testing dataset will be used to the predict the 'classe' variable
+```{r}
+predict(mod.rf,newdata = testing)
+```
